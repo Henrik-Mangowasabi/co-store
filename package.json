@@ -1,0 +1,94 @@
+{
+  "name": "co-store",
+  "displayName": "Co-Store",
+  "description": "Lance et supervise shopify theme dev directement depuis VS Code.",
+  "version": "0.0.1",
+  "publisher": "Moon-Moon",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "license": "MIT",
+  "icon": "media/icon.png",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Henrik-Mangowasabi/co-store"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "co-store-sidebar",
+          "title": "Co-Store",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "co-store-sidebar": [
+        {
+          "id": "coStoreView",
+          "name": "Shopify Theme Dev"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "co-store.setStore",
+        "title": "Définir la boutique",
+        "category": "Co-Store"
+      },
+      {
+        "command": "co-store.connect",
+        "title": "Connecter",
+        "category": "Co-Store",
+        "icon": "$(play)"
+      },
+      {
+        "command": "co-store.disconnect",
+        "title": "Déconnecter",
+        "category": "Co-Store",
+        "icon": "$(stop)"
+      },
+      {
+        "command": "co-store.openLink",
+        "title": "Ouvrir le lien",
+        "category": "Co-Store"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "co-store.connect",
+          "when": "view == coStoreView && !co-store.isConnected",
+          "group": "navigation"
+        },
+        {
+          "command": "co-store.disconnect",
+          "when": "view == coStoreView && co-store.isConnected",
+          "group": "navigation"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "pretest": "npm run compile && npm run lint",
+    "lint": "eslint src"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.85.0",
+    "@types/node": "20.x",
+    "typescript-eslint": "^7.0.0",
+    "eslint": "^8.56.0",
+    "typescript": "^5.3.0"
+  }
+}
