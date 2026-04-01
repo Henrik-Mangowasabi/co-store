@@ -20,20 +20,11 @@
   ],
   "main": "./out/extension.js",
   "contributes": {
-    "viewsContainers": {
-      "activitybar": [
-        {
-          "id": "co-store-sidebar",
-          "title": "Co-Store",
-          "icon": "media/icon.svg"
-        }
-      ]
-    },
     "views": {
-      "co-store-sidebar": [
+      "explorer": [
         {
           "id": "coStoreView",
-          "name": "Shopify Theme Dev"
+          "name": "MM Store Connexion"
         }
       ]
     },
