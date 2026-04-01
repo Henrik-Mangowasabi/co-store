@@ -24,9 +24,10 @@ class ShopifyItem extends vscode.TreeItem {
 
         switch (itemType) {
             case 'store':
-                this.iconPath = new vscode.ThemeIcon('globe');
+                this.iconPath = new vscode.ThemeIcon('edit');
                 this.command = { command: 'co-store.setStore', title: 'Définir la boutique' };
-                this.tooltip = 'Cliquer pour modifier l\'URL de la boutique';
+                this.tooltip = 'Cliquer pour saisir l\'URL de la boutique';
+                this.description = storeUrl ? '← cliquer pour modifier' : '← cliquer pour saisir';
                 break;
 
             case 'status':
@@ -75,7 +76,7 @@ class ShopifyDevProvider implements vscode.TreeDataProvider<ShopifyItem> {
         if (!element) {
             const storeLabel = storeUrl
                 ? `Boutique: ${storeUrl}`
-                : 'Boutique: (non définie — cliquer pour configurer)';
+                : 'Boutique: ...';
 
             const statusLabel = isConnected ? 'Statut: Connecté' : 'Statut: Déconnecté';
 
