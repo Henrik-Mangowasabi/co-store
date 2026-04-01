@@ -135,6 +135,13 @@ function parseLine(line: string): void {
     const shareMatch = clean.match(/(https?:\/\/\S+preview_theme_id\S*)/);
     const adminMatch = clean.match(/(https?:\/\/\S+\/admin\/themes\/\S*\/editor\S*)/);
 
+    // Détection du lien d'authentification Shopify → ouverture automatique
+    const authMatch = clean.match(/(https?:\/\/accounts\.shopify\.[^\s]+)/);
+    if (authMatch) {
+        vscode.env.openExternal(vscode.Uri.parse(authMatch[1]));
+        vscode.window.showInformationMessage('Shopify demande une authentification — ouverture du navigateur...');
+    }
+
     // Détection d'erreur
     const isErrorLine = /\b(error|erreur|failed|fail|exception)\b/i.test(clean);
     if (isErrorLine && !hasError) { hasError = true; provider.refresh(); }
