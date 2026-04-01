@@ -2,7 +2,7 @@
   "name": "co-store",
   "displayName": "MM Store Connexion",
   "description": "Lance et supervise shopify theme dev directement depuis VS Code.",
-  "version": "0.0.8",
+  "version": "0.0.9",
   "publisher": "Moon-Moon",
   "engines": {
     "vscode": "^1.85.0"
