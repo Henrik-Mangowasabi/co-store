@@ -6,7 +6,11 @@
       "Bash(gh auth:*)",
       "Bash(gh repo:*)",
       "Bash(git remote:*)",
-      "Bash(git branch:*)"
+      "Bash(git branch:*)",
+      "Bash(shopify theme:*)",
+      "Bash(kill %1)",
+      "Bash(wait)",
+      "Read(//c/Users/henri/AppData/Local/Temp/**)"
     ]
   }
 }
