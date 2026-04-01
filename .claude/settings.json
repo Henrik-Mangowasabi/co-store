@@ -10,7 +10,9 @@
       "Bash(shopify theme:*)",
       "Bash(kill %1)",
       "Bash(wait)",
-      "Read(//c/Users/henri/AppData/Local/Temp/**)"
+      "Read(//c/Users/henri/AppData/Local/Temp/**)",
+      "Bash(echo \"exit: $?\")",
+      "Bash(netstat -aon)"
     ]
   }
 }

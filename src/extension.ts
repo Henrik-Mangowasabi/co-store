@@ -194,14 +194,13 @@ function registerCommands(context: vscode.ExtensionContext): void {
             const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
             localUrl = ''; shareUrl = ''; adminUrl = ''; buffer = '';
 
-            // Tue tout process qui occupe le port 9292, attend que ce soit libéré
+            // Tue tout process qui occupe le port 9292
             await new Promise<void>(resolve => {
-                const ps = spawn('powershell', [
-                    '-NoProfile', '-Command',
-                    `$pids = (netstat -ano | Select-String ':9292\\s').Matches | ForEach-Object { ($_ -split '\\s+')[-1] } | Sort-Object -Unique; foreach ($p in $pids) { try { Stop-Process -Id $p -Force } catch {} }; Start-Sleep -Milliseconds 1000`
+                const killer = spawn('cmd', ['/c',
+                    'for /f "tokens=5" %p in (\'netstat -aon ^| findstr "127.0.0.1:9292"\') do @taskkill /F /PID %p 2>nul'
                 ], { shell: false });
-                ps.on('close', () => resolve());
-                ps.on('error', () => resolve());
+                killer.on('close', () => setTimeout(resolve, 800));
+                killer.on('error', () => setTimeout(resolve, 800));
                 setTimeout(resolve, 3000);
             });
 
