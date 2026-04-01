@@ -16,7 +16,7 @@ let outputChannel: vscode.OutputChannel;
 let hasError = false;
 let authRequested = false;
 let logFile = '';
-let logWatcher: fs.FSWatcher | undefined;
+let logPoller: ReturnType<typeof setInterval> | undefined;
 let accumulatedOutput = '';
 
 let provider: ShopifyDevProvider;
@@ -176,7 +176,7 @@ function onData(data: Buffer): void {
 }
 
 function stopProcess(): void {
-    if (logWatcher) { logWatcher.close(); logWatcher = undefined; }
+    if (logPoller) { clearInterval(logPoller); logPoller = undefined; }
     if (shopifyProcess) { shopifyProcess.kill(); shopifyProcess = undefined; }
     if (shopifyTerminal) { shopifyTerminal.dispose(); shopifyTerminal = undefined; }
     if (logFile && fs.existsSync(logFile)) { try { fs.unlinkSync(logFile); } catch (_) { } }
@@ -243,9 +243,9 @@ function registerCommands(context: vscode.ExtensionContext): void {
             });
             shopifyTerminal.sendText(cmd);
 
-            // Surveille le fichier log pour parser les URLs
+            // Poll le fichier log toutes les 500ms pour parser les URLs
             let lastSize = 0;
-            logWatcher = fs.watch(logFile, () => {
+            logPoller = setInterval(() => {
                 try {
                     const stat = fs.statSync(logFile);
                     if (stat.size > lastSize) {
@@ -257,7 +257,7 @@ function registerCommands(context: vscode.ExtensionContext): void {
                         onData(buf);
                     }
                 } catch (_) { }
-            });
+            }, 500);
 
             // Détecte la fermeture du terminal
             context.subscriptions.push(
@@ -266,7 +266,7 @@ function registerCommands(context: vscode.ExtensionContext): void {
                         shopifyTerminal = undefined;
                         isConnected = false;
                         vscode.commands.executeCommand('setContext', 'co-store.isConnected', false);
-                        if (logWatcher) { logWatcher.close(); logWatcher = undefined; }
+                        if (logPoller) { clearInterval(logPoller); logPoller = undefined; }
                         provider.refresh();
                     }
                 })
