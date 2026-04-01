@@ -1,6 +1,7 @@
 .vscode/**
 .vscode-test/**
 .claude/**
+.shopify/**
 src/**
 .gitignore
 eslint.config.mjs
