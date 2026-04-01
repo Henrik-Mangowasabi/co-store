@@ -96,8 +96,11 @@ class ShopifyDevProvider implements vscode.TreeDataProvider<ShopifyItem> {
                 new ShopifyItem(statusLabel, vscode.TreeItemCollapsibleState.None, 'status'),
             ];
 
-            if (isConnected) {
+            const hasLinks = localUrl || shareUrl || adminUrl;
+            if (isConnected || hasLinks) {
                 items.push(new ShopifyItem('Liens', vscode.TreeItemCollapsibleState.Expanded, 'links'));
+            }
+            if (isConnected) {
                 items.push(new ShopifyItem('Voir les logs', vscode.TreeItemCollapsibleState.None, 'logs'));
             }
 
