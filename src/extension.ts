@@ -1,17 +1,23 @@
 import * as vscode from 'vscode';
-import { spawn, ChildProcess } from 'child_process';
+import { ChildProcess } from 'child_process';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 
 // --- État global ---
 let shopifyProcess: ChildProcess | undefined;
+let shopifyTerminal: vscode.Terminal | undefined;
 let isConnected = false;
 let storeUrl = '';
 let localUrl = '';
 let shareUrl = '';
 let adminUrl = '';
 let outputChannel: vscode.OutputChannel;
-let lineBuffer = '';
 let hasError = false;
 let authRequested = false;
+let logFile = '';
+let logWatcher: fs.FSWatcher | undefined;
+let accumulatedOutput = '';
 
 let provider: ShopifyDevProvider;
 
@@ -125,47 +131,58 @@ class ShopifyDevProvider implements vscode.TreeDataProvider<ShopifyItem> {
     }
 }
 
-// --- Parsing ligne par ligne ---
+// --- Parsing de l'output accumulé ---
 
-function parseLine(line: string): void {
-    outputChannel.appendLine(line);
+function parseAccumulated(text: string): void {
+    // Nettoyage ANSI + box-drawing
+    const clean = text
+        .replace(/\x1B\[[0-9;]*[mGKHFJK]/g, '')
+        .replace(/\x1B\[\??\d+[hl]/g, '')
+        .replace(/[│╭╰╮╯─┌┐└┘├┤┬┴┼█▀▄]/g, ' ');
 
-    // Nettoyage ANSI + caractères de boîte unicode
-    const clean = line
-        .replace(/\x1B\[[0-9;]*[mGKHF]/g, '')
-        .replace(/[│╭╰╮╯─┌┐└┘├┤┬┴┼]/g, ' ');
+    // Extraction large de toutes les URLs
+    const allUrls = clean.match(/https?:\/\/[^\s"'<>\]|]+/g) || [];
+    let changed = false;
 
-    const localMatch = clean.match(/(https?:\/\/127\.0\.0\.1:\d+[^\s]*)/);
-    const shareMatch = clean.match(/(https?:\/\/\S+preview_theme_id\S*)/);
-    const adminMatch = clean.match(/(https?:\/\/\S+\/admin\/themes\/\S*\/editor\S*)/);
+    for (const rawUrl of allUrls) {
+        const url = rawUrl.replace(/[.,;:)]+$/, ''); // Retire ponctuation finale
 
-    // Détection du lien d'authentification Shopify → ouverture automatique
-    const authMatch = clean.match(/(https?:\/\/accounts\.shopify\.[^\s]+)/);
-    if (authMatch) {
-        authRequested = true;
-        vscode.env.openExternal(vscode.Uri.parse(authMatch[1]));
-        vscode.window.showInformationMessage('Shopify demande une authentification — connecte-toi dans le navigateur puis reclique sur ▶');
+        if (!localUrl && (url.includes('127.0.0.1') || url.includes('localhost'))) {
+            localUrl = url; changed = true;
+        } else if (!shareUrl && url.includes('preview_theme_id')) {
+            shareUrl = url; changed = true;
+        } else if (!adminUrl && url.includes('/admin/themes/') && url.includes('editor')) {
+            adminUrl = url; changed = true;
+        } else if (!authRequested && url.includes('accounts.shopify')) {
+            authRequested = true;
+            vscode.env.openExternal(vscode.Uri.parse(url));
+            vscode.window.showInformationMessage(
+                'Shopify demande une authentification — connecte-toi dans le navigateur puis reclique sur ▶'
+            );
+        }
     }
 
-    // Détection d'erreur
-    const isErrorLine = /\b(error|erreur|failed|fail|exception)\b/i.test(clean);
+    const isErrorLine = /\b(AggregateError|ETIMEDOUT|ECONNREFUSED|ENOTFOUND|fatal|crash)\b/i.test(clean);
     if (isErrorLine && !hasError) { hasError = true; provider.refresh(); }
-
-    let changed = false;
-    if (localMatch && !localUrl) { localUrl = localMatch[1]; changed = true; }
-    if (shareMatch && !shareUrl) { shareUrl = shareMatch[1]; changed = true; }
-    if (adminMatch && !adminUrl) { adminUrl = adminMatch[1]; changed = true; }
 
     if (changed) { provider.refresh(); }
 }
 
 function onData(data: Buffer): void {
-    lineBuffer += data.toString();
-    const lines = lineBuffer.split(/\r?\n/);
-    lineBuffer = lines.pop() ?? '';
-    for (const line of lines) {
-        parseLine(line);
-    }
+    const text = data.toString();
+    outputChannel.append(text);
+    accumulatedOutput += text;
+    parseAccumulated(text);
+}
+
+function stopProcess(): void {
+    if (logWatcher) { logWatcher.close(); logWatcher = undefined; }
+    if (shopifyProcess) { shopifyProcess.kill(); shopifyProcess = undefined; }
+    if (shopifyTerminal) { shopifyTerminal.dispose(); shopifyTerminal = undefined; }
+    if (logFile && fs.existsSync(logFile)) { try { fs.unlinkSync(logFile); } catch (_) { } }
+    isConnected = false;
+    vscode.commands.executeCommand('setContext', 'co-store.isConnected', false);
+    provider.refresh();
 }
 
 // --- Commandes ---
@@ -195,75 +212,73 @@ function registerCommands(context: vscode.ExtensionContext): void {
                 if (pick) { await vscode.commands.executeCommand('co-store.setStore'); }
                 return;
             }
-
-            if (shopifyProcess) {
+            if (shopifyProcess || shopifyTerminal) {
                 vscode.window.showWarningMessage('Le serveur est déjà en cours d\'exécution.');
                 return;
             }
 
             const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-
-            localUrl = '';
-            shareUrl = '';
-            adminUrl = '';
-            lineBuffer = '';
-            hasError = false;
-            authRequested = false;
+            localUrl = ''; shareUrl = ''; adminUrl = '';
+            hasError = false; authRequested = false; accumulatedOutput = '';
             isConnected = true;
             vscode.commands.executeCommand('setContext', 'co-store.isConnected', true);
-            provider.refresh();
 
             outputChannel.clear();
             outputChannel.appendLine(`▶ shopify theme dev -s ${storeUrl}`);
             outputChannel.appendLine('─────────────────────────────');
+            provider.refresh();
 
-            shopifyProcess = spawn('shopify', ['theme', 'dev', '-s', storeUrl], {
-                shell: true,
-                cwd,
-                env: { ...process.env, FORCE_COLOR: '0' }
+            // Fichier temp pour capturer l'output du terminal
+            logFile = path.join(os.tmpdir(), `shopify-dev-${Date.now()}.log`);
+
+            // Lance dans un terminal VS Code (vrai TTY) avec tee vers le fichier log
+            const cmd = process.platform === 'win32'
+                ? `shopify theme dev -s ${storeUrl} | Tee-Object -FilePath "${logFile}"`
+                : `shopify theme dev -s ${storeUrl} 2>&1 | tee "${logFile}"`;
+
+            shopifyTerminal = vscode.window.createTerminal({
+                name: 'Shopify Theme Dev',
+                cwd
+            });
+            shopifyTerminal.sendText(cmd);
+
+            // Surveille le fichier log pour parser les URLs
+            let lastSize = 0;
+            logWatcher = fs.watch(logFile, () => {
+                try {
+                    const stat = fs.statSync(logFile);
+                    if (stat.size > lastSize) {
+                        const buf = Buffer.alloc(stat.size - lastSize);
+                        const fd = fs.openSync(logFile, 'r');
+                        fs.readSync(fd, buf, 0, buf.length, lastSize);
+                        fs.closeSync(fd);
+                        lastSize = stat.size;
+                        onData(buf);
+                    }
+                } catch (_) { }
             });
 
-            shopifyProcess.stdout?.on('data', onData);
-            shopifyProcess.stderr?.on('data', onData);
-
-            shopifyProcess.on('close', (code) => {
-                if (lineBuffer) { parseLine(lineBuffer); lineBuffer = ''; }
-                isConnected = false;
-                shopifyProcess = undefined;
-                vscode.commands.executeCommand('setContext', 'co-store.isConnected', false);
-                provider.refresh();
-                if (code !== 0 && code !== null && !authRequested) {
-                    outputChannel.appendLine(`\n⚠ Processus arrêté (code ${code})`);
-                    vscode.window.showErrorMessage(
-                        `shopify theme dev s'est arrêté (code ${code}).`,
-                        'Voir les logs'
-                    ).then(choice => {
-                        if (choice === 'Voir les logs') { outputChannel.show(true); }
-                    });
-                }
-                authRequested = false;
-            });
-
-            shopifyProcess.on('error', (err) => {
-                vscode.window.showErrorMessage(`Impossible de lancer shopify: ${err.message}`);
-                isConnected = false;
-                shopifyProcess = undefined;
-                vscode.commands.executeCommand('setContext', 'co-store.isConnected', false);
-                provider.refresh();
-            });
+            // Détecte la fermeture du terminal
+            context.subscriptions.push(
+                vscode.window.onDidCloseTerminal(t => {
+                    if (t === shopifyTerminal) {
+                        shopifyTerminal = undefined;
+                        isConnected = false;
+                        vscode.commands.executeCommand('setContext', 'co-store.isConnected', false);
+                        if (logWatcher) { logWatcher.close(); logWatcher = undefined; }
+                        provider.refresh();
+                    }
+                })
+            );
         })
     );
 
     context.subscriptions.push(
         vscode.commands.registerCommand('co-store.disconnect', () => {
-            if (shopifyProcess) { shopifyProcess.kill(); shopifyProcess = undefined; }
-            isConnected = false;
-            localUrl = '';
-            shareUrl = '';
-            adminUrl = '';
-            vscode.commands.executeCommand('setContext', 'co-store.isConnected', false);
-            provider.refresh();
+            stopProcess();
+            localUrl = ''; shareUrl = ''; adminUrl = '';
             vscode.window.showInformationMessage('Serveur arrêté.');
+            provider.refresh();
         })
     );
 
@@ -290,12 +305,11 @@ export function activate(context: vscode.ExtensionContext): void {
 
     provider = new ShopifyDevProvider();
     vscode.window.registerTreeDataProvider('coStoreView', provider);
-
     vscode.commands.executeCommand('setContext', 'co-store.isConnected', false);
 
     registerCommands(context);
 }
 
 export function deactivate(): void {
-    if (shopifyProcess) { shopifyProcess.kill(); }
+    stopProcess();
 }
