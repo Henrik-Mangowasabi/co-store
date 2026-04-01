@@ -8,6 +8,8 @@ let storeUrl = '';
 let localUrl = '';
 let shareUrl = '';
 let adminUrl = '';
+let outputChannel: vscode.OutputChannel;
+let lineBuffer = '';
 
 let provider: ShopifyDevProvider;
 
@@ -17,7 +19,7 @@ class ShopifyItem extends vscode.TreeItem {
     constructor(
         public readonly label: string,
         public readonly collapsibleState: vscode.TreeItemCollapsibleState,
-        public readonly itemType: 'store' | 'status' | 'links' | 'link',
+        public readonly itemType: 'store' | 'status' | 'links' | 'link' | 'logs',
         public readonly url?: string
     ) {
         super(label, collapsibleState);
@@ -27,7 +29,7 @@ class ShopifyItem extends vscode.TreeItem {
                 this.iconPath = new vscode.ThemeIcon('edit');
                 this.command = { command: 'co-store.setStore', title: 'Définir la boutique' };
                 this.tooltip = 'Cliquer pour saisir l\'URL de la boutique';
-                this.description = storeUrl ? '← cliquer pour modifier' : '← cliquer pour saisir';
+                this.description = storeUrl ? '← modifier' : '← cliquer pour saisir';
                 break;
 
             case 'status':
@@ -54,6 +56,12 @@ class ShopifyItem extends vscode.TreeItem {
                 }
                 this.tooltip = url;
                 break;
+
+            case 'logs':
+                this.iconPath = new vscode.ThemeIcon('output');
+                this.command = { command: 'co-store.showLogs', title: 'Voir les logs' };
+                this.tooltip = 'Ouvrir le panneau de logs';
+                break;
         }
     }
 }
@@ -74,10 +82,7 @@ class ShopifyDevProvider implements vscode.TreeDataProvider<ShopifyItem> {
 
     getChildren(element?: ShopifyItem): ShopifyItem[] {
         if (!element) {
-            const storeLabel = storeUrl
-                ? `Boutique: ${storeUrl}`
-                : 'Boutique: ...';
-
+            const storeLabel = storeUrl ? `Boutique: ${storeUrl}` : 'Boutique: ...';
             const statusLabel = isConnected ? 'Statut: Connecté' : 'Statut: Déconnecté';
 
             const items: ShopifyItem[] = [
@@ -86,94 +91,66 @@ class ShopifyDevProvider implements vscode.TreeDataProvider<ShopifyItem> {
             ];
 
             if (isConnected) {
-                items.push(new ShopifyItem(
-                    'Liens',
-                    vscode.TreeItemCollapsibleState.Expanded,
-                    'links'
-                ));
+                items.push(new ShopifyItem('Liens', vscode.TreeItemCollapsibleState.Expanded, 'links'));
+                items.push(new ShopifyItem('Voir les logs', vscode.TreeItemCollapsibleState.None, 'logs'));
             }
 
             return items;
         }
 
         if (element.itemType === 'links') {
-            const links: ShopifyItem[] = [];
-
-            if (localUrl) {
-                links.push(new ShopifyItem(
-                    `Local: ${localUrl}`,
-                    vscode.TreeItemCollapsibleState.None,
-                    'link',
-                    localUrl
-                ));
-            } else {
-                links.push(new ShopifyItem(
-                    'Local: en attente...',
-                    vscode.TreeItemCollapsibleState.None,
-                    'link'
-                ));
-            }
-
-            if (shareUrl) {
-                links.push(new ShopifyItem(
-                    'Share (aperçu public)',
-                    vscode.TreeItemCollapsibleState.None,
-                    'link',
-                    shareUrl
-                ));
-            } else {
-                links.push(new ShopifyItem(
-                    'Share: en attente...',
-                    vscode.TreeItemCollapsibleState.None,
-                    'link'
-                ));
-            }
-
-            if (adminUrl) {
-                links.push(new ShopifyItem(
-                    'Admin (éditeur de thème)',
-                    vscode.TreeItemCollapsibleState.None,
-                    'link',
-                    adminUrl
-                ));
-            } else {
-                links.push(new ShopifyItem(
-                    'Admin: en attente...',
-                    vscode.TreeItemCollapsibleState.None,
-                    'link'
-                ));
-            }
-
-            return links;
+            return [
+                localUrl
+                    ? new ShopifyItem(`Local: ${localUrl}`, vscode.TreeItemCollapsibleState.None, 'link', localUrl)
+                    : new ShopifyItem('Local: en attente...', vscode.TreeItemCollapsibleState.None, 'link'),
+                shareUrl
+                    ? new ShopifyItem('Share (aperçu public)', vscode.TreeItemCollapsibleState.None, 'link', shareUrl)
+                    : new ShopifyItem('Share: en attente...', vscode.TreeItemCollapsibleState.None, 'link'),
+                adminUrl
+                    ? new ShopifyItem('Admin (éditeur de thème)', vscode.TreeItemCollapsibleState.None, 'link', adminUrl)
+                    : new ShopifyItem('Admin: en attente...', vscode.TreeItemCollapsibleState.None, 'link'),
+            ];
         }
 
         return [];
     }
 }
 
-// --- Parsing du stdout ---
+// --- Parsing ligne par ligne ---
 
-function parseOutput(text: string): void {
-    // Nettoyage des caractères ANSI et de boîte unicode
-    const clean = text.replace(/\x1B\[[0-9;]*m/g, '').replace(/[│╭╰╮╯─]/g, '');
+function parseLine(line: string): void {
+    outputChannel.appendLine(line);
 
-    const localMatch = clean.match(/(http:\/\/127\.0\.0\.1:\d+[^\s\]]*)/);
-    const shareMatch = clean.match(/(https?:\/\/[^\s\]]*preview_theme_id[^\s\]]*)/);
-    const adminMatch = clean.match(/(https?:\/\/[^\s\]]*\/admin\/themes\/[^\s\]]*\/editor[^\s\]]*)/);
+    // Nettoyage ANSI + caractères de boîte unicode
+    const clean = line
+        .replace(/\x1B\[[0-9;]*[mGKHF]/g, '')
+        .replace(/[│╭╰╮╯─┌┐└┘├┤┬┴┼]/g, ' ');
+
+    const localMatch = clean.match(/(https?:\/\/127\.0\.0\.1:\d+[^\s]*)/);
+    const shareMatch = clean.match(/(https?:\/\/\S+preview_theme_id\S*)/);
+    const adminMatch = clean.match(/(https?:\/\/\S+\/admin\/themes\/\S*\/editor\S*)/);
 
     let changed = false;
-    if (localMatch && !localUrl) { localUrl = localMatch[1].replace(/[^\w:/.-]/g, ''); changed = true; }
-    if (shareMatch && !shareUrl) { shareUrl = shareMatch[1].replace(/[^\w:/.-?=&]/g, ''); changed = true; }
-    if (adminMatch && !adminUrl) { adminUrl = adminMatch[1].replace(/[^\w:/.-?=&]/g, ''); changed = true; }
+    if (localMatch && !localUrl) { localUrl = localMatch[1]; changed = true; }
+    if (shareMatch && !shareUrl) { shareUrl = shareMatch[1]; changed = true; }
+    if (adminMatch && !adminUrl) { adminUrl = adminMatch[1]; changed = true; }
 
     if (changed) { provider.refresh(); }
+}
+
+function onData(data: Buffer): void {
+    lineBuffer += data.toString();
+    const lines = lineBuffer.split(/\r?\n/);
+    lineBuffer = lines.pop() ?? '';
+    for (const line of lines) {
+        parseLine(line);
+    }
 }
 
 // --- Commandes ---
 
 function registerCommands(context: vscode.ExtensionContext): void {
 
-    // Définir la boutique
     context.subscriptions.push(
         vscode.commands.registerCommand('co-store.setStore', async () => {
             const input = await vscode.window.showInputBox({
@@ -190,17 +167,11 @@ function registerCommands(context: vscode.ExtensionContext): void {
         })
     );
 
-    // Connecter
     context.subscriptions.push(
         vscode.commands.registerCommand('co-store.connect', async () => {
             if (!storeUrl) {
-                const pick = await vscode.window.showErrorMessage(
-                    'Aucune boutique définie.',
-                    'Configurer maintenant'
-                );
-                if (pick) {
-                    await vscode.commands.executeCommand('co-store.setStore');
-                }
+                const pick = await vscode.window.showErrorMessage('Aucune boutique définie.', 'Configurer maintenant');
+                if (pick) { await vscode.commands.executeCommand('co-store.setStore'); }
                 return;
             }
 
@@ -214,43 +185,39 @@ function registerCommands(context: vscode.ExtensionContext): void {
             localUrl = '';
             shareUrl = '';
             adminUrl = '';
+            lineBuffer = '';
             isConnected = true;
             vscode.commands.executeCommand('setContext', 'co-store.isConnected', true);
             provider.refresh();
 
+            outputChannel.clear();
+            outputChannel.show(true);
+            outputChannel.appendLine(`▶ shopify theme dev -s ${storeUrl}`);
+            outputChannel.appendLine('─────────────────────────────');
+
             shopifyProcess = spawn('shopify', ['theme', 'dev', '-s', storeUrl], {
                 shell: true,
-                cwd
+                cwd,
+                env: { ...process.env, FORCE_COLOR: '0' }
             });
 
-            vscode.window.showInformationMessage(`Connexion à ${storeUrl}...`);
-
-            shopifyProcess.stdout?.on('data', (data: Buffer) => {
-                parseOutput(data.toString());
-            });
-
-            // Shopify CLI écrit souvent dans stderr aussi
-            shopifyProcess.stderr?.on('data', (data: Buffer) => {
-                parseOutput(data.toString());
-            });
+            shopifyProcess.stdout?.on('data', onData);
+            shopifyProcess.stderr?.on('data', onData);
 
             shopifyProcess.on('close', (code) => {
+                // Flush buffer restant
+                if (lineBuffer) { parseLine(lineBuffer); lineBuffer = ''; }
                 isConnected = false;
                 shopifyProcess = undefined;
                 vscode.commands.executeCommand('setContext', 'co-store.isConnected', false);
                 provider.refresh();
-
-                if (code !== 0 && code !== null && code !== undefined) {
-                    vscode.window.showErrorMessage(
-                        `shopify theme dev s'est arrêté (code ${code}).`
-                    );
+                if (code !== 0 && code !== null) {
+                    vscode.window.showErrorMessage(`shopify theme dev s'est arrêté (code ${code}).`);
                 }
             });
 
             shopifyProcess.on('error', (err) => {
-                vscode.window.showErrorMessage(
-                    `Impossible de lancer shopify: ${err.message}. Vérifiez que la CLI Shopify est installée.`
-                );
+                vscode.window.showErrorMessage(`Impossible de lancer shopify: ${err.message}`);
                 isConnected = false;
                 shopifyProcess = undefined;
                 vscode.commands.executeCommand('setContext', 'co-store.isConnected', false);
@@ -259,13 +226,9 @@ function registerCommands(context: vscode.ExtensionContext): void {
         })
     );
 
-    // Déconnecter
     context.subscriptions.push(
         vscode.commands.registerCommand('co-store.disconnect', () => {
-            if (shopifyProcess) {
-                shopifyProcess.kill();
-                shopifyProcess = undefined;
-            }
+            if (shopifyProcess) { shopifyProcess.kill(); shopifyProcess = undefined; }
             isConnected = false;
             localUrl = '';
             shareUrl = '';
@@ -276,12 +239,15 @@ function registerCommands(context: vscode.ExtensionContext): void {
         })
     );
 
-    // Ouvrir un lien
     context.subscriptions.push(
         vscode.commands.registerCommand('co-store.openLink', (url: string) => {
-            if (url) {
-                vscode.env.openExternal(vscode.Uri.parse(url));
-            }
+            if (url) { vscode.env.openExternal(vscode.Uri.parse(url)); }
+        })
+    );
+
+    context.subscriptions.push(
+        vscode.commands.registerCommand('co-store.showLogs', () => {
+            outputChannel.show(true);
         })
     );
 }
@@ -289,8 +255,10 @@ function registerCommands(context: vscode.ExtensionContext): void {
 // --- Point d'entrée ---
 
 export function activate(context: vscode.ExtensionContext): void {
-    // Récupère la boutique sauvegardée pour ce workspace
     storeUrl = context.workspaceState.get<string>('co-store.storeUrl', '');
+
+    outputChannel = vscode.window.createOutputChannel('MM Store Connexion');
+    context.subscriptions.push(outputChannel);
 
     provider = new ShopifyDevProvider();
     vscode.window.registerTreeDataProvider('coStoreView', provider);
@@ -301,7 +269,5 @@ export function activate(context: vscode.ExtensionContext): void {
 }
 
 export function deactivate(): void {
-    if (shopifyProcess) {
-        shopifyProcess.kill();
-    }
+    if (shopifyProcess) { shopifyProcess.kill(); }
 }

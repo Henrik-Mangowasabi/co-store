@@ -50,6 +50,12 @@
         "command": "co-store.openLink",
         "title": "Ouvrir le lien",
         "category": "Co-Store"
+      },
+      {
+        "command": "co-store.showLogs",
+        "title": "Voir les logs",
+        "category": "Co-Store",
+        "icon": "$(output)"
       }
     ],
     "menus": {
