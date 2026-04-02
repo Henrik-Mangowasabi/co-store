@@ -1,28 +1,39 @@
 # MM Store Connexion
 
-Extension VS Code pour lancer et superviser `shopify theme dev` directement depuis la barre latérale, sans jamais toucher au terminal.
+**Lance et supervise `shopify theme dev` en un clic depuis VS Code — sans jamais ouvrir de terminal.**
 
 ---
 
-## Ce que fait l'extension
+## Pourquoi cette extension ?
 
-Quand tu développes un thème Shopify, tu dois normalement ouvrir un terminal et taper :
+Quand tu développes un thème Shopify, tu dois taper cette commande à chaque session :
 
 ```
 shopify theme dev -s ton-store.myshopify.com
 ```
 
-Cette extension fait exactement ça pour toi — en un clic — et affiche les 3 liens générés directement dans la sidebar de VS Code. L'URL de ta boutique est mémorisée par projet, donc tu n'as jamais à la retaper.
+Puis copier-coller manuellement les 3 liens générés (local, aperçu, éditeur) à chaque fois.
+
+**MM Store Connexion automatise tout ça.** L'URL de ta boutique est mémorisée par projet. Un clic pour démarrer, un clic pour arrêter, les liens s'affichent automatiquement dans la sidebar.
 
 ---
 
-## Affichage dans la sidebar
+## Fonctionnalités
 
-Le panneau **MM Store Connexion** apparaît dans l'Explorer de VS Code (même endroit que MM Snippet X Ray). Il affiche :
+- **▶ Démarrage en un clic** — lance `shopify theme dev` directement depuis la sidebar
+- **⏹ Arrêt propre** — stoppe le serveur sans laisser de processus zombie sur le port 9292
+- **3 liens cliquables** — Local, Share (aperçu public) et Admin (éditeur de thème) s'affichent automatiquement dès que Shopify CLI les génère
+- **URL mémorisée** — l'URL de ta boutique est sauvegardée par workspace, tu n'as jamais à la retaper
+- **Logs intégrés** — tout l'output de la CLI est accessible via le panneau Output, avec alerte visuelle ⚠ si une erreur est détectée
+- **Auth automatique** — si Shopify CLI demande une authentification, le navigateur s'ouvre automatiquement
+
+---
+
+## Aperçu
 
 ```
 MM Store Connexion
-  ✏  Boutique: ton-store.myshopify.com   ← modifier
+  ✏  Boutique: ton-store.myshopify.com
   🟢 Statut: Connecté
   🔗 Liens
        ↗ Local
@@ -31,100 +42,26 @@ MM Store Connexion
   📄 Voir les logs
 ```
 
-- **Boutique** — clic pour changer l'URL. Elle est sauvegardée par workspace (chaque projet peut avoir sa propre boutique).
-- **Statut** — vert = connecté, rouge = déconnecté.
-- **Liens** — apparaissent dès que Shopify CLI les génère. Clic = ouverture dans le navigateur.
-- **Voir les logs** — ouvre le panneau Output avec tout ce que Shopify CLI a sorti. Devient `⚠ Logs (erreur)` si une erreur est détectée.
-
 ---
 
-## Boutons dans l'en-tête du panneau
+## Utilisation
 
-| Bouton | Action |
-|--------|--------|
-| ▶ Play | Lance `shopify theme dev` |
-| ⏹ Stop | Arrête le serveur |
-
----
-
-## Comment ça marche techniquement
-
-### 1. Sauvegarde de la boutique
-L'URL est stockée via `context.workspaceState` — spécifique au dossier de travail ouvert dans VS Code. Si tu ouvres un autre projet, tu peux configurer une boutique différente.
-
-### 2. Lancement du serveur
-Au clic sur ▶ :
-1. Le port 9292 est libéré si un ancien process l'occupe encore (via `netstat` + `process.kill()` en Node.js pur)
-2. `shopify theme dev --no-color -s [boutique]` est lancé via `spawn` en arrière-plan
-3. Le stdout et stderr sont capturés en temps réel
-
-### 3. Parsing des URLs
-L'output de Shopify CLI est analysé avec des regex pour détecter les 3 liens dès qu'ils apparaissent :
-
-```
-http://127.0.0.1:9292          → Local
-...?preview_theme_id=...        → Share
-.../admin/themes/.../editor     → Admin
-```
-
-La sidebar se met à jour automatiquement dès qu'un lien est trouvé.
-
-### 4. Authentification automatique
-Si Shopify CLI demande une connexion (premier lancement), le lien `accounts.shopify.com` est détecté et ouvert automatiquement dans le navigateur. Un message s'affiche : *"connecte-toi puis reclique sur ▶"*.
-
-### 5. Logs & erreurs
-Tout l'output de la CLI est redirigé vers le panneau **Output > MM Store Connexion**. Si une erreur critique est détectée (`Error`, `ETIMEDOUT`, etc.), l'item logs passe en mode `⚠`.
-
----
-
-## Installation
-
-### Depuis le marketplace VS Code
-Cherche **MM Store Connexion** dans l'onglet Extensions de VS Code.
-
-### Depuis un fichier .vsix
-`Ctrl+Shift+P` → **Extensions: Install from VSIX** → sélectionne le fichier `.vsix`
+1. Ouvre ton projet de thème Shopify dans VS Code
+2. Clique sur **"Boutique: ..."** dans la sidebar pour saisir l'URL de ta boutique (`mon-store.myshopify.com`)
+3. Clique sur **▶** dans l'en-tête du panneau pour lancer le serveur
+4. Les liens **Local**, **Share** et **Admin** apparaissent automatiquement — clique pour ouvrir dans le navigateur
+5. Clique sur **⏹** pour arrêter
 
 ---
 
 ## Prérequis
 
-- [Shopify CLI](https://shopify.dev/docs/themes/tools/cli) installé et accessible dans le PATH (`shopify` doit fonctionner dans ton terminal)
+- [Shopify CLI](https://shopify.dev/docs/themes/tools/cli) installé (`shopify` accessible dans le PATH)
+- Windows
 - Être authentifié au moins une fois via `shopify auth login`
-- Windows (le kill de port utilise `netstat` Windows)
 
 ---
 
-## Publier une nouvelle version
+## Par Moon Moon
 
-```bash
-# 1. Modifier la version dans package.json
-# 2. Packager
-npx @vscode/vsce package --no-dependencies
-
-# 3. Uploader sur le marketplace
-# marketplace.visualstudio.com → Moon Moon → ... → Update → upload le .vsix
-```
-
----
-
-## Structure du projet
-
-```
-co-store/
-├── src/
-│   └── extension.ts     ← code principal (TreeView + spawn + parsing)
-├── media/
-│   └── icon.svg         ← icône de la sidebar
-├── out/
-│   └── extension.js     ← compilé par tsc (ne pas éditer)
-├── package.json         ← contributions VS Code (view, commands, menus)
-├── tsconfig.json
-└── README.md
-```
-
----
-
-## Publisher
-
-**Moon Moon** — [marketplace.visualstudio.com/manage/publishers/moon-moon](https://marketplace.visualstudio.com/manage/publishers/moon-moon)
+Fait avec ❤️ pour les développeurs Shopify qui veulent rester dans leur éditeur.
