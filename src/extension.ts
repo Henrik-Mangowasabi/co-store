@@ -10,6 +10,7 @@ let shareUrl = '';
 let adminUrl = '';
 let outputChannel: vscode.OutputChannel;
 let buffer = '';
+let hasError = false;
 
 let provider: ShopifyDevProvider;
 
@@ -19,7 +20,7 @@ class ShopifyItem extends vscode.TreeItem {
     constructor(
         public readonly label: string,
         public readonly collapsibleState: vscode.TreeItemCollapsibleState,
-        public readonly itemType: 'store' | 'status' | 'links' | 'link',
+        public readonly itemType: 'store' | 'status' | 'links' | 'link' | 'logs',
         public readonly url?: string
     ) {
         super(label, collapsibleState);
@@ -53,6 +54,15 @@ class ShopifyItem extends vscode.TreeItem {
                 }
                 this.tooltip = url ?? 'En attente...';
                 break;
+            case 'logs':
+                this.iconPath = new vscode.ThemeIcon(
+                    hasError ? 'warning' : 'output',
+                    hasError ? new vscode.ThemeColor('problemsWarningIcon.foreground') : undefined
+                );
+                this.label = hasError ? 'Logs (⚠ erreur)' : 'Voir les logs';
+                this.tooltip = hasError ? 'Erreur détectée — cliquer pour voir' : 'Voir les logs';
+                this.command = { command: 'co-store.showLogs', title: 'Voir les logs' };
+                break;
         }
     }
 }
@@ -80,9 +90,10 @@ class ShopifyDevProvider implements vscode.TreeDataProvider<ShopifyItem> {
             ];
 
             if (isConnected || localUrl || shareUrl || adminUrl) {
-                items.push(new ShopifyItem(
-                    'Liens', vscode.TreeItemCollapsibleState.Expanded, 'links'
-                ));
+                items.push(new ShopifyItem('Liens', vscode.TreeItemCollapsibleState.Expanded, 'links'));
+            }
+            if (isConnected) {
+                items.push(new ShopifyItem('Voir les logs', vscode.TreeItemCollapsibleState.None, 'logs'));
             }
             return items;
         }
@@ -151,6 +162,12 @@ function parseOutput(text: string): void {
         buffer = ''; // reset après auth
     }
 
+    // Détection d'erreur
+    if (/\b(Error|EADDRINUSE|ETIMEDOUT|ECONNREFUSED|fatal|crash)\b/.test(buffer) && !hasError) {
+        hasError = true;
+        provider.refresh();
+    }
+
     if (changed) { provider.refresh(); }
 
     // Garde seulement les derniers 10ko pour éviter la mémoire
@@ -192,7 +209,7 @@ function registerCommands(context: vscode.ExtensionContext): void {
             }
 
             const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-            localUrl = ''; shareUrl = ''; adminUrl = ''; buffer = '';
+            localUrl = ''; shareUrl = ''; adminUrl = ''; buffer = ''; hasError = false;
 
             // Tue tout process qui occupe le port 9292 via Node.js directement
             try {
