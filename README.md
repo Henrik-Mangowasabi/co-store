@@ -21,9 +21,10 @@ Puis copier-coller manuellement les 3 liens générés (local, aperçu, éditeur
 ## Fonctionnalités
 
 - **▶ Démarrage en un clic** — lance `shopify theme dev` directement depuis la sidebar
-- **⏹ Arrêt propre** — stoppe le serveur sans laisser de processus zombie sur le port 9292
+- **⏹ Arrêt propre** — stoppe le serveur et libère le port 9292 sans laisser de processus zombie
 - **3 liens cliquables** — Local, Share (aperçu public) et Admin (éditeur de thème) s'affichent automatiquement dès que Shopify CLI les génère
 - **URL mémorisée** — l'URL de ta boutique est sauvegardée par workspace, tu n'as jamais à la retaper
+- **Détection de crash** — si le serveur s'arrête de façon inattendue, le statut passe en "Crash — reclique ▶" avec une notification
 - **Logs intégrés** — tout l'output de la CLI est accessible via le panneau Output, avec alerte visuelle ⚠ si une erreur est détectée
 - **Auth automatique** — si Shopify CLI demande une authentification, le navigateur s'ouvre automatiquement
 
@@ -33,7 +34,7 @@ Puis copier-coller manuellement les 3 liens générés (local, aperçu, éditeur
 
 ```
 MM Store Connexion
-  ✏  Boutique: ton-store.myshopify.com
+  ✏  Boutique: ton-store.myshopify.com   ← modifier
   🟢 Statut: Connecté
   🔗 Liens
        ↗ Local
@@ -50,13 +51,13 @@ MM Store Connexion
 2. Clique sur **"Boutique: ..."** dans la sidebar pour saisir l'URL de ta boutique (`mon-store.myshopify.com`)
 3. Clique sur **▶** dans l'en-tête du panneau pour lancer le serveur
 4. Les liens **Local**, **Share** et **Admin** apparaissent automatiquement — clique pour ouvrir dans le navigateur
-5. Clique sur **⏹** pour arrêter
+5. Clique sur **⏹** pour arrêter proprement
 
 ---
 
 ## Prérequis
 
-- [Shopify CLI](https://shopify.dev/docs/themes/tools/cli) installé (`shopify` accessible dans le PATH)
+- [Shopify CLI](https://shopify.dev/docs/themes/tools/cli) installé et accessible dans le PATH (`shopify`)
 - Windows
 - Être authentifié au moins une fois via `shopify auth login`
 

@@ -12,6 +12,7 @@ let outputChannel: vscode.OutputChannel;
 let buffer = '';
 let hasError = false;
 let crashed = false;
+let intentionalDisconnect = false;
 
 let provider: ShopifyDevProvider;
 
@@ -128,10 +129,13 @@ function parseOutput(text: string): void {
     outputChannel.append(text);
     buffer += text;
 
-    // Nettoyage ANSI
+    // Nettoyage ANSI + OSC (hyperliens terminal, ex: \x1B]8;;URL\x1B\\ ou \x1B]8;;\x07)
     const clean = buffer
+        .replace(/\x1B\][^\x07\x1B]*(?:\x07|\x1B\\)/g, '')  // OSC sequences (inkl. OSC 8 hyperlinks)
         .replace(/\x1B\[[0-9;]*[mGKHFJK]/g, '')
-        .replace(/\x1B\[\??\d+[hl]/g, '');
+        .replace(/\x1B\[\??\d+[hl]/g, '')
+        .replace(/\x1B[()][AB012]/g, '')                      // charset sequences
+        .replace(/\x1B[@-Z\\-_]/g, '');                       // Fe escape sequences restantes
 
     let changed = false;
 
@@ -143,13 +147,13 @@ function parseOutput(text: string): void {
 
     // Share: URL avec preview_theme_id
     if (!shareUrl) {
-        const m = clean.match(/(https?:\/\/[^\s│╭╰╮╯\]]+preview_theme_id[^\s│╭╰╮╯\]]+)/);
+        const m = clean.match(/(https?:\/\/[^\s│╭╰╮╯\]\x00-\x1F]+preview_theme_id[^\s│╭╰╮╯\]\x00-\x1F]+)/);
         if (m) { shareUrl = m[1].replace(/[╭╰╮╯│─\]|]+$/, '').trim(); changed = true; }
     }
 
-    // Admin: URL avec /admin/themes/ et editor
+    // Admin: URL avec /admin/themes/ et editor (ou /admin/themes/ seul si pas d'editor dans l'URL)
     if (!adminUrl) {
-        const m = clean.match(/(https?:\/\/[^\s│╭╰╮╯\]]+\/admin\/themes\/[^\s│╭╰╮╯\]]+editor[^\s│╭╰╮╯\]]*)/);
+        const m = clean.match(/(https?:\/\/[^\s│╭╰╮╯\]\x00-\x1F]+\/admin\/themes\/[^\s│╭╰╮╯\]\x00-\x1F]*(?:editor)?[^\s│╭╰╮╯\]\x00-\x1F]*)/);
         if (m) { adminUrl = m[1].replace(/[╭╰╮╯│─\]|]+$/, '').trim(); changed = true; }
     }
 
@@ -210,7 +214,7 @@ function registerCommands(context: vscode.ExtensionContext): void {
             }
 
             const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-            localUrl = ''; shareUrl = ''; adminUrl = ''; buffer = ''; hasError = false; crashed = false;
+            localUrl = ''; shareUrl = ''; adminUrl = ''; buffer = ''; hasError = false; crashed = false; intentionalDisconnect = false;
 
             // Tue tout process qui occupe le port 9292 via Node.js directement
             try {
@@ -220,16 +224,12 @@ function registerCommands(context: vscode.ExtensionContext): void {
                         const parts = line.trim().split(/\s+/);
                         const pid = parseInt(parts[parts.length - 1]);
                         if (!isNaN(pid) && pid > 0) {
-                            try { process.kill(pid); } catch (_) {}
+                            try { execSync(`taskkill /F /T /PID ${pid}`, { shell: 'cmd.exe' }); } catch (_) {}
                         }
                     }
                 }
                 await new Promise(r => setTimeout(r, 1000));
             } catch (_) { /* port déjà libre */ }
-
-            isConnected = true;
-            vscode.commands.executeCommand('setContext', 'co-store.isConnected', true);
-            provider.refresh();
 
             outputChannel.clear();
             outputChannel.appendLine(`▶ shopify theme dev --no-color -s ${storeUrl}`);
@@ -241,6 +241,10 @@ function registerCommands(context: vscode.ExtensionContext): void {
                 { shell: true, cwd }
             );
 
+            isConnected = true;
+            vscode.commands.executeCommand('setContext', 'co-store.isConnected', true);
+            provider.refresh();
+
             shopifyProcess.stdout?.on('data', (d: Buffer) => parseOutput(d.toString()));
             shopifyProcess.stderr?.on('data', (d: Buffer) => parseOutput(d.toString()));
 
@@ -249,7 +253,7 @@ function registerCommands(context: vscode.ExtensionContext): void {
                 shopifyProcess = undefined;
                 vscode.commands.executeCommand('setContext', 'co-store.isConnected', false);
                 provider.refresh();
-                if (code !== 0 && code !== null && code !== 143) {
+                if (!intentionalDisconnect && !crashed && code !== 0 && code !== null && code !== 143) {
                     crashed = true;
                     vscode.window.showErrorMessage(
                         `shopify theme dev s'est arrêté (code ${code}).`,
@@ -261,6 +265,7 @@ function registerCommands(context: vscode.ExtensionContext): void {
             shopifyProcess.on('error', (err) => {
                 vscode.window.showErrorMessage(`Impossible de lancer shopify: ${err.message}`);
                 isConnected = false;
+                crashed = true;
                 shopifyProcess = undefined;
                 vscode.commands.executeCommand('setContext', 'co-store.isConnected', false);
                 provider.refresh();
@@ -270,7 +275,29 @@ function registerCommands(context: vscode.ExtensionContext): void {
 
     context.subscriptions.push(
         vscode.commands.registerCommand('co-store.disconnect', () => {
-            if (shopifyProcess) { shopifyProcess.kill(); shopifyProcess = undefined; }
+            intentionalDisconnect = true;
+            if (shopifyProcess) {
+                try {
+                    if (shopifyProcess.pid) {
+                        execSync(`taskkill /F /T /PID ${shopifyProcess.pid}`, { shell: 'cmd.exe' });
+                    } else {
+                        shopifyProcess.kill();
+                    }
+                } catch (_) {}
+                shopifyProcess = undefined;
+            }
+            // Libère le port 9292 même si le PID était inconnu
+            try {
+                const out = execSync('netstat -aon', { shell: 'cmd.exe', timeout: 3000 }).toString();
+                for (const line of out.split('\n')) {
+                    if (line.includes('127.0.0.1:9292') && line.includes('LISTENING')) {
+                        const pid = parseInt(line.trim().split(/\s+/).pop() ?? '');
+                        if (!isNaN(pid) && pid > 0) {
+                            try { execSync(`taskkill /F /T /PID ${pid}`, { shell: 'cmd.exe' }); } catch (_) {}
+                        }
+                    }
+                }
+            } catch (_) {}
             isConnected = false; crashed = false;
             localUrl = ''; shareUrl = ''; adminUrl = '';
             vscode.commands.executeCommand('setContext', 'co-store.isConnected', false);
@@ -308,5 +335,14 @@ export function activate(context: vscode.ExtensionContext): void {
 }
 
 export function deactivate(): void {
-    if (shopifyProcess) { shopifyProcess.kill(); }
+    if (shopifyProcess) {
+        intentionalDisconnect = true;
+        try {
+            if (shopifyProcess.pid) {
+                execSync(`taskkill /F /T /PID ${shopifyProcess.pid}`, { shell: 'cmd.exe' });
+            } else {
+                shopifyProcess.kill();
+            }
+        } catch (_) {}
+    }
 }
